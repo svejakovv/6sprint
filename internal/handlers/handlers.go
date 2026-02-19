@@ -5,38 +5,43 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/Yandex-Practicum/go1fl-sprint6-final/internal/service"
 )
 
-func IndexHandler(w http.ResponseWriter, r *http.Request) {
-	http.ServeFile(w, r, "./index.html")
-}
-
 func UploadHandler(w http.ResponseWriter, r *http.Request) {
+	var input string
+	var err error
 
-	err := r.ParseMultipartForm(10 << 20) // 10 MB max
-	if err != nil {
-		http.Error(w, "Unable to parse form", http.StatusInternalServerError)
-		return
+	err = r.ParseMultipartForm(10 << 20)
+	if err == nil {
+		file, _, err2 := r.FormFile("myFile")
+		if err2 == nil && file != nil {
+			defer file.Close()
+			data, err := io.ReadAll(file)
+			if err != nil {
+				http.Error(w, "Unable to read file", http.StatusInternalServerError)
+				return
+			}
+			input = string(data)
+		} else {
+			r.MultipartForm = nil
+		}
 	}
 
-	file, header, err := r.FormFile("myFile")
-	if err != nil {
-		http.Error(w, "Unable to retrieve file", http.StatusInternalServerError)
-		return
+	if input == "" {
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "Unable to read request body", http.StatusBadRequest)
+			return
+		}
+		input = string(data)
+		if input == "" {
+			http.Error(w, "Empty input", http.StatusBadRequest)
+			return
+		}
 	}
-	defer file.Close()
-
-	data, err := io.ReadAll(file)
-	if err != nil {
-		http.Error(w, "Unable to read file data", http.StatusInternalServerError)
-		return
-	}
-
-	input := string(data)
 
 	output, err := service.DetectAndConvert(input)
 	if err != nil {
@@ -44,21 +49,17 @@ func UploadHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ext := filepath.Ext(header.Filename)
-	newFileName := time.Now().UTC().String() + ext
-
-	newFile, err := os.Create(newFileName)
+	filename := time.Now().UTC().String() + ".txt"
+	err = os.WriteFile(filename, []byte(output), 0644)
 	if err != nil {
-		http.Error(w, "Unable to create output file", http.StatusInternalServerError)
-		return
-	}
-	defer newFile.Close()
-
-	_, err = newFile.WriteString(output)
-	if err != nil {
-		http.Error(w, "Unable to write to output file", http.StatusInternalServerError)
+		http.Error(w, "Unable to save file", http.StatusInternalServerError)
 		return
 	}
 
-	fmt.Fprintf(w, "Converted: %s\nSaved as: %s", output, newFileName)
+	response := fmt.Sprintf("%s\nConverted: %s\nSaved as: %s", input, output, filename)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	fmt.Fprint(w, response)
+}
+func IndexHandler(w http.ResponseWriter, r *http.Request) {
+	http.ServeFile(w, r, "index.html")
 }
